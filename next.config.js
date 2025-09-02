@@ -1,5 +1,14 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  reactStrictMode: true,
-}
-module.exports = nextConfig
+  images: {
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "nextjs-school-images.s3.ap-south-1.amazonaws.com",
+        pathname: "/**",
+      },
+    ],
+  },
+};
+
+module.exports = nextConfig;

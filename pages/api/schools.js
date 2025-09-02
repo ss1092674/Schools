@@ -1,102 +1,74 @@
+import formidable from 'formidable';
 import fs from 'fs';
-import path from 'path';
-import { IncomingForm } from 'formidable';
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getPool } from '../../lib/db';
 
 export const config = {
   api: {
-    bodyParser: false,
+    bodyParser: false, // file upload के लिए bodyParser disable करना जरूरी है
   },
 };
 
-function parseForm(req) {
-  const uploadDir = path.join(process.cwd(), 'public', 'schoolImages');
-  if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir, { recursive: true });
-  }
-  const form = new IncomingForm({
-    multiples: false,
-    keepExtensions: true,
-    uploadDir, 
-  });
-  return new Promise((resolve, reject) => {
-    form.parse(req, (err, fields, files) => {
-      if (err) return reject(err);
-      resolve({ fields, files, uploadDir });
-    });
-  });
-}
+const s3 = new S3Client({
+  region: process.env.AWS_REGION,
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  },
+});
 
 export default async function handler(req, res) {
-  const pool = getPool();
-
-  if (req.method === 'GET') {
-    try {
-      const [rows] = await pool.query('SELECT id, name, address, city, image FROM schools ORDER BY id DESC');
-      return res.status(200).json({ success: true, data: rows });
-    } catch (e) {
-      console.error(e);
-      return res.status(500).json({ success: false, message: 'Database error fetching schools.' });
-    }
-  }
-
   if (req.method === 'POST') {
     try {
-      const { fields, files, uploadDir } = await parseForm(req);
+      const form = formidable({ multiples: false });
 
-      const name = (fields.name || '').toString().trim();
-      const address = (fields.address || '').toString().trim();
-      const city = (fields.city || '').toString().trim();
-      const state = (fields.state || '').toString().trim();
-      const contact = (fields.contact || '').toString().trim();
-      const email_id = (fields.email_id || '').toString().trim();
+      form.parse(req, async (err, fields, files) => {
+        if (err) return res.status(500).json({ message: 'Form parsing error' });
 
-      if (!name || !address || !city || !state || !contact || !email_id) {
-        return res.status(400).json({ success: false, message: 'All fields are required.' });
-      }
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(email_id)) {
-        return res.status(400).json({ success: false, message: 'Invalid email.' });
-      }
-      const contactRegex = /^[0-9]{7,15}$/;
-      if (!contactRegex.test(contact)) {
-        return res.status(400).json({ success: false, message: 'Invalid contact number.' });
-      }
+        const { name, address, city, state, contact, email_id } = fields;
+        const imageFile = files.image?.[0];
 
-      let imagePath = null;
-      if (files && files.image) {
-        const img = Array.isArray(files.image) ? files.image[0] : files.image;
-        const ext = path.extname(img.originalFilename || img.newFilename || '.jpg').toLowerCase() || '.jpg';
-        const safeBase = path.basename((img.originalFilename || 'school').replace(/[^a-z0-9-_\.]/gi, '_'), ext);
-        const filename = `${Date.now()}_${safeBase}${ext}`.replace('__', '_');
-        const finalPath = path.join(uploadDir, filename);
-
-
-        try {
-          fs.renameSync(img.filepath || img.filepath === '' ? img.filepath : img._writeStream?.path, finalPath);
-        } catch (err) {
-          // fallback: copy then unlink
-          fs.copyFileSync(img.filepath || img._writeStream?.path, finalPath);
-          fs.unlinkSync(img.filepath || img._writeStream?.path);
+        if (!imageFile) {
+          return res.status(400).json({ message: 'Image is required' });
         }
 
-        imagePath = `/schoolImages/${filename}`;
-      } else {
-        return res.status(400).json({ success: false, message: 'Image is required.' });
-      }
+        // Upload image to S3
+        const fileContent = fs.readFileSync(imageFile.filepath);
+        const fileName = `${Date.now()}-${imageFile.originalFilename}`;
 
-      const [result] = await pool.query(
-        'INSERT INTO schools (name, address, city, state, contact, image, email_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [name, address, city, state, contact, imagePath, email_id]
-      );
+        const uploadParams = {
+          Bucket: process.env.AWS_S3_BUCKET,
+          Key: fileName,
+          Body: fileContent,
+          ContentType: imageFile.mimetype,
+        };
 
-      return res.status(201).json({ success: true, id: result.insertId, image: imagePath });
-    } catch (e) {
-      console.error(e);
-      return res.status(500).json({ success: false, message: 'Error processing request.' });
+        await s3.send(new PutObjectCommand(uploadParams));
+
+        const imageUrl = `https://${process.env.AWS_S3_BUCKET}.s3.${process.env.AWS_REGION}.amazonaws.com/${fileName}`;
+
+        // Save to MySQL
+        const pool = getPool();
+        const [result] = await pool.query(
+          'INSERT INTO schools (name, address, city, state, contact, email_id, image) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          [name, address, city, state, contact, email_id, imageUrl]
+        );
+
+        return res.status(200).json({ message: 'School saved successfully', id: result.insertId });
+      });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ message: 'Server error' });
     }
+  } else if (req.method === 'GET') {
+    try {
+      const pool = getPool();
+      const [rows] = await pool.query('SELECT * FROM schools ORDER BY id DESC');
+      return res.status(200).json(rows);
+    } catch (error) {
+      return res.status(500).json({ message: 'DB fetch error' });
+    }
+  } else {
+    return res.status(405).json({ message: 'Method not allowed' });
   }
-
-  res.setHeader('Allow', ['GET', 'POST']);
-  return res.status(405).json({ success: false, message: 'Method not allowed' });
 }

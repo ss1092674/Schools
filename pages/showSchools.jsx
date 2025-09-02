@@ -10,8 +10,13 @@ export default function ShowSchools({ schools }) {
           <article key={s.id} style={{border: '1px solid #e5e7eb', borderRadius: 12, overflow: 'hidden'}}>
             <div style={{position:'relative', width: '100%', height: 160, background:'#f9fafb'}}>
               {s.image && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={s.image} alt={s.name} style={{width:'100%', height:'100%', objectFit:'cover'}} />
+                <Image 
+                  src={s.image} 
+                  alt={s.name} 
+                  fill
+                  style={{objectFit: 'cover'}}
+                  sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 25vw"
+                />
               )}
             </div>
             <div style={{padding: '0.75rem'}}>
