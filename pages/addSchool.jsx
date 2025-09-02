@@ -74,7 +74,7 @@ export default function AddSchool() {
           <label>School Image</label><br/>
           <input type="file" accept="image/*" {...register('image', { required: 'Image is required' })} />
           {errors.image && <span style={{color:'crimson', display:'block'}}>{errors.image.message}</span>}
-          <small>Accepted: jpg, png, webp up to ~5MB (server limit depends on platform).</small>
+          <small>Accepted: jpg, png, webp up to ~5MB .</small>
         </div>
 
         <div style={{gridColumn: '1 / -1', display:'flex', gap:'1rem', alignItems:'center'}}>
